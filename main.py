@@ -6,7 +6,7 @@ import assets.password_generator as password_generator
 
 def main():
     window = tk.Tk()
-    window.title("Gerador de Senhas")
+    window.title("FortiCore Sentinel")
     window.geometry("650x650")
 
     password_generator.setup_ui(window)

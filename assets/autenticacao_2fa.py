@@ -39,14 +39,14 @@ def solicitar_nome_usuario():
             janela.destroy()
 
     janela = tk.Toplevel()
-    janela.title("Nome do Armazém")
+    janela.title("Nome do Seu Cofre")
     janela.geometry("400x150")
     janela.resizable(False, False)
     janela.grab_set()
 
     tk.Label(
         janela,
-        text="Obrigatório colocar um nome ou apelido para o seu Armazém",
+        text="Obrigatório colocar um nome ou apelido para o seu Cofre",
         font=("Arial", 11, "bold"),
         wraplength=380,
     ).pack(pady=10)
@@ -88,7 +88,7 @@ def mostrar_qrcode_gui(otpauth_url):
     imagem_tk = ImageTk.PhotoImage(imagem)
 
     tk.Label(
-        janela, text="🔒 Armazém Seguro", font=("Arial", 14, "bold"), fg="#004080"
+        janela, text="🔒 Cofre Seguro", font=("Arial", 14, "bold"), fg="#004080"
     ).pack(pady=(10, 5))
 
     tk.Label(
@@ -112,7 +112,7 @@ def mostrar_qrcode_gui(otpauth_url):
         pady=10,
     )
 
-    janela.after(12000, permitir_fechar)
+    janela.after(9000, permitir_fechar)
 
     janela.grab_set()
     janela.wait_window()

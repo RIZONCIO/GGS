@@ -7,7 +7,7 @@ from tkinter import messagebox
 
 def exibir_resultado(keyword, resultados):
     window = ttkb.Toplevel()
-    window.title("Senhas Encontradas")
+    window.title("FortiCore Sentinel | Senhas Encontradas")
     window.geometry("500x500")
     window.resizable(False, False)
 

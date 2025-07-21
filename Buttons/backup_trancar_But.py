@@ -1,6 +1,6 @@
 import os
-import hashlib
-from tkinter import filedialog, messagebox, Toplevel, StringVar, simpledialog, ttk
+import zipfile
+from tkinter import filedialog, messagebox, simpledialog, Toplevel, StringVar, ttk
 from Crypto.Cipher import AES
 from Crypto.Protocol.KDF import PBKDF2
 from Crypto.Random import get_random_bytes
@@ -8,13 +8,7 @@ from Crypto.Util.Padding import pad
 import pyperclip
 from utils.caminhos import get_pasta_cofre
 
-# Caminho completo para a pasta cofre
 pasta_cofre = get_pasta_cofre()
-ARQUIVO_DADOS = os.path.join(pasta_cofre, "._dados.sjson")
-
-# Garante que a pasta cofre exista
-if not os.path.exists(pasta_cofre):
-    os.makedirs(pasta_cofre)
 
 
 def mostrar_chave_backup(chave):
@@ -36,44 +30,48 @@ def mostrar_chave_backup(chave):
     janela.grab_set()
 
 
+def zipar_pasta_cofre(arquivo_zip):
+    with zipfile.ZipFile(arquivo_zip, "w", zipfile.ZIP_DEFLATED) as zipf:
+        for root, _, files in os.walk(pasta_cofre):
+            for file in files:
+                caminho_absoluto = os.path.join(root, file)
+                caminho_relativo = os.path.relpath(caminho_absoluto, pasta_cofre)
+                zipf.write(caminho_absoluto, caminho_relativo)
+
+
 def backup_e_trancar_cofre():
     try:
-        if not os.path.exists(ARQUIVO_DADOS):
-            messagebox.showerror(
-                "Erro", f"Arquivo de dados não encontrado: {ARQUIVO_DADOS}"
-            )
-            return
-
-        destino_pasta = filedialog.askdirectory(
-            title="Escolha a pasta para salvar o backup"
-        )
+        destino_pasta = filedialog.askdirectory(title="Escolha onde salvar o backup")
         if not destino_pasta:
             return
 
         senha = simpledialog.askstring(
-            "Senha", "Digite uma senha para proteger o backup:", show="*"
+            "Senha", "Digite uma senha para o backup:", show="*"
         )
         if not senha or len(senha) < 6:
             messagebox.showerror("Erro", "Senha muito curta.")
             return
 
-        with open(ARQUIVO_DADOS, "rb") as origem:
-            dados = origem.read()
+        # Caminho do .zip temporário
+        zip_temp = os.path.join(destino_pasta, "backup_temp.zip")
+        zipar_pasta_cofre(zip_temp)
 
-        # Geração de salt e derivação segura da chave
+        with open(zip_temp, "rb") as f:
+            dados = f.read()
+
+        os.remove(zip_temp)
+
         salt = get_random_bytes(16)
-        chave_gerada = PBKDF2(senha, salt, dkLen=32, count=100_000)
-
-        # Criptografia com AES
+        chave = PBKDF2(senha, salt, dkLen=32, count=100_000)
         iv = get_random_bytes(16)
-        cipher = AES.new(chave_gerada, AES.MODE_CBC, iv)
-        dados_criptografados = iv + salt + cipher.encrypt(pad(dados, AES.block_size))
+        cipher = AES.new(chave, AES.MODE_CBC, iv)
+        criptografado = iv + salt + cipher.encrypt(pad(dados, AES.block_size))
 
-        destino_arquivo = os.path.join(destino_pasta, "._dados.sjson")
-        with open(destino_arquivo, "wb") as destino:
-            destino.write(dados_criptografados)
+        caminho_saida = os.path.join(destino_pasta, "backup_cofre.zip.enc")
+        with open(caminho_saida, "wb") as f:
+            f.write(criptografado)
 
-        messagebox.showinfo("Backup", "Backup criptografado e salvo com sucesso!")
+        messagebox.showinfo("Sucesso", "Backup criptografado e salvo com sucesso!")
 
     except Exception as e:
-        messagebox.showerror("Erro", f"Erro ao realizar backup: {e}")
+        messagebox.showerror("Erro", f"Erro ao criar backup: {e}")

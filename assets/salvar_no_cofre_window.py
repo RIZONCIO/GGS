@@ -9,7 +9,7 @@ from urllib.parse import urlparse
 def abrir_cofre_window(password="", keyword=""):
     # Janela principal
     janela = ttkb.Toplevel()
-    janela.title("Salvar no Cofre")
+    janela.title("FortiCore Sentinel | Salvar no Cofre")
     janela.geometry("800x500")
     janela.resizable(False, False)
     style = ttkb.Style("cosmo")

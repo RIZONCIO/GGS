@@ -11,7 +11,7 @@ import pyperclip
 
 
 def setup_ui(window):
-    window.title("Gerador de Senhas")
+    window.title("FortiCore Sentinel")
     window.geometry("500x600")
     window.resizable(False, False)
     window.style = ttkb.Style("cosmo")
