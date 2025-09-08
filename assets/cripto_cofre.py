@@ -64,7 +64,6 @@ def descriptografar(dado_base64):
 
 
 def gerar_fernet(chave_hex: str):
-    # Converte hex → bytes → hash 32 bytes → base64
     key_bytes = bytes.fromhex(chave_hex)
     key_hash = hashlib.sha256(key_bytes).digest()
     key_b64 = base64.urlsafe_b64encode(key_hash)
