@@ -1,5 +1,5 @@
 """
-FortiCore Sentinel - Aba do Cofre KeePass
+FortiCore Sentinel - Aba do Cofre KeePass - VERSÃO CORRIGIDA
 """
 
 import tkinter as tk
@@ -10,7 +10,9 @@ import pyperclip
 from datetime import datetime
 
 from core.keepass_manager import KeePassManager
-from assets.autenticacao_2fa import verificar_2fa_gui
+
+# MUDANÇA 1: Importar a função correta para usar apenas 2FA
+from assets.autenticacao_2fa import verificar_apenas_2fa, verificar_2fa_gui
 
 
 class VaultTab:
@@ -33,7 +35,7 @@ class VaultTab:
         self.create_vault_list()
         self.create_context_menu()
 
-        # Carregar dados iniciais
+        # Carregar dados iniciais SEM autenticação automática
         self.refresh_vault_list()
 
     def create_toolbar(self):
@@ -177,6 +179,11 @@ class VaultTab:
     def import_csv_entries(self):
         """Importa entradas de arquivo CSV"""
         try:
+            # MUDANÇA 2: Usar verificar_apenas_2fa em vez de verificar_2fa_gui
+            if not verificar_apenas_2fa(self.tab_frame):
+                messagebox.showinfo("Cancelado", "Operação cancelada pelo usuário.")
+                return
+
             from tkinter import filedialog, messagebox
 
             # Abrir diálogo para selecionar arquivo CSV
@@ -277,13 +284,13 @@ class VaultTab:
             print(f"Erro ao atualizar entradas: {e}")
 
     def refresh_vault_list(self):
-        """Atualiza a lista do cofre"""
+        """Atualiza a lista do cofre SEM autenticação"""
         try:
             # Limpar árvore
             for item in self.vault_tree.get_children():
                 self.vault_tree.delete(item)
 
-            # Obter entradas
+            # Obter entradas SEM autenticação (apenas listagem)
             self.current_entries = self.keepass_manager.get_all_entries()
 
             # Popular árvore
@@ -320,7 +327,7 @@ class VaultTab:
             self.status_bar.update_status(f"Erro ao carregar cofre: {str(e)}")
 
     def on_search_change(self, event):
-        """Busca em tempo real conforme digita"""
+        """Busca em tempo real conforme digita SEM autenticação"""
         query = self.search_entry.get().strip()
         if len(query) >= 2:  # Buscar a partir de 2 caracteres
             self.filter_entries(query)
@@ -328,7 +335,7 @@ class VaultTab:
             self.refresh_vault_list()
 
     def filter_entries(self, query):
-        """Filtra entradas na lista"""
+        """Filtra entradas na lista SEM autenticação"""
         try:
             # Limpar árvore
             for item in self.vault_tree.get_children():
@@ -376,19 +383,16 @@ class VaultTab:
             print(f"Erro ao filtrar: {e}")
 
     def search_vault(self):
-        """Busca no cofre com 2FA"""
+        """Busca no cofre com 2FA APENAS se for busca avançada"""
         query = self.search_entry.get().strip()
         if not query:
             messagebox.showwarning("Aviso", "Digite algo para buscar!")
             return
 
         try:
-            # Verificar 2FA para buscas
-            if not verificar_2fa_gui():
-                messagebox.showerror(
-                    "Erro de autenticação",
-                    "A autenticação 2FA falhou. Operação cancelada.",
-                )
+            # MUDANÇA 3: Usar verificar_apenas_2fa para busca avançada
+            if not verificar_apenas_2fa(self.tab_frame):
+                messagebox.showinfo("Cancelado", "Busca cancelada pelo usuário.")
                 return
 
             results = self.keepass_manager.search_entries(query)
@@ -515,7 +519,7 @@ class VaultTab:
             self.context_menu.post(event.x_root, event.y_root)
 
     def view_entry_details(self, event=None):
-        """Visualiza detalhes da entrada"""
+        """Visualiza detalhes da entrada COM 2FA"""
         entry = self.get_selected_entry()
         if not entry:
             if event is None:  # Chamado pelo menu, não por duplo clique
@@ -523,11 +527,9 @@ class VaultTab:
             return
 
         try:
-            if not verificar_2fa_gui():
-                messagebox.showerror(
-                    "Erro de autenticação",
-                    "A autenticação 2FA falhou. Operação cancelada.",
-                )
+            # MUDANÇA 4: Usar verificar_apenas_2fa para ver detalhes
+            if not verificar_apenas_2fa(self.tab_frame):
+                messagebox.showinfo("Cancelado", "Visualização cancelada pelo usuário.")
                 return
 
             self.show_entry_details(entry)
@@ -699,17 +701,17 @@ class VaultTab:
             messagebox.showwarning("Aviso", "Nenhum conteúdo para copiar!")
 
     def copy_password(self):
-        """Copia senha da entrada selecionada"""
+        """Copia senha da entrada selecionada COM 2FA"""
         entry = self.get_selected_entry()
         if not entry:
             messagebox.showwarning("Aviso", "Selecione uma entrada!")
             return
 
         try:
-            if not verificar_2fa_gui():
-                messagebox.showerror(
-                    "Erro de autenticação",
-                    "A autenticação 2FA falhou. Operação cancelada.",
+            # MUDANÇA 5: Usar verificar_apenas_2fa para copiar senha
+            if not verificar_apenas_2fa(self.tab_frame):
+                messagebox.showinfo(
+                    "Cancelado", "Cópia de senha cancelada pelo usuário."
                 )
                 return
 
@@ -719,21 +721,22 @@ class VaultTab:
             messagebox.showerror("Erro", f"Erro ao copiar senha: {str(e)}")
 
     def copy_username(self):
-        """Copia usuário da entrada selecionada"""
+        """Copia usuário da entrada selecionada SEM 2FA"""
         entry = self.get_selected_entry()
         if not entry:
             messagebox.showwarning("Aviso", "Selecione uma entrada!")
             return
 
+        # Copiar usuário não precisa de autenticação
         self.copy_to_clipboard(entry["username"], "Usuário copiado!")
 
     def add_entry(self):
-        """Adiciona nova entrada"""
+        """Adiciona nova entrada COM 2FA"""
         try:
-            if not verificar_2fa_gui():
-                messagebox.showerror(
-                    "Erro de autenticação",
-                    "A autenticação 2FA falhou. Operação cancelada.",
+            # MUDANÇA 6: Usar verificar_apenas_2fa para adicionar entrada
+            if not verificar_apenas_2fa(self.tab_frame):
+                messagebox.showinfo(
+                    "Cancelado", "Adição de entrada cancelada pelo usuário."
                 )
                 return
 
@@ -743,17 +746,17 @@ class VaultTab:
             messagebox.showerror("Erro", f"Erro ao adicionar entrada: {str(e)}")
 
     def edit_entry(self):
-        """Edita entrada selecionada"""
+        """Edita entrada selecionada COM 2FA"""
         entry = self.get_selected_entry()
         if not entry:
             messagebox.showwarning("Aviso", "Selecione uma entrada!")
             return
 
         try:
-            if not verificar_2fa_gui():
-                messagebox.showerror(
-                    "Erro de autenticação",
-                    "A autenticação 2FA falhou. Operação cancelada.",
+            # MUDANÇA 7: Usar verificar_apenas_2fa para editar entrada
+            if not verificar_apenas_2fa(self.tab_frame):
+                messagebox.showinfo(
+                    "Cancelado", "Edição de entrada cancelada pelo usuário."
                 )
                 return
 
@@ -948,7 +951,7 @@ class VaultTab:
         title_entry.focus()
 
     def delete_entry(self):
-        """Exclui entrada selecionada"""
+        """Exclui entrada selecionada COM 2FA"""
         entry = self.get_selected_entry()
         if not entry:
             messagebox.showwarning("Aviso", "Selecione uma entrada!")
@@ -961,11 +964,9 @@ class VaultTab:
             return
 
         try:
-            if not verificar_2fa_gui():
-                messagebox.showerror(
-                    "Erro de autenticação",
-                    "A autenticação 2FA falhou. Operação cancelada.",
-                )
+            # MUDANÇA 8: Usar verificar_apenas_2fa para exclusão
+            if not verificar_apenas_2fa(self.tab_frame):
+                messagebox.showinfo("Cancelado", "Exclusão cancelada pelo usuário.")
                 return
 
             success = self.keepass_manager.delete_entry(entry["entry_object"])
@@ -981,13 +982,11 @@ class VaultTab:
             messagebox.showerror("Erro", f"Erro ao excluir entrada: {str(e)}")
 
     def backup_vault(self):
-        """Faz backup do cofre"""
+        """Faz backup do cofre COM 2FA"""
         try:
-            if not verificar_2fa_gui():
-                messagebox.showerror(
-                    "Erro de autenticação",
-                    "A autenticação 2FA falhou. Operação cancelada.",
-                )
+            # MUDANÇA 9: Usar verificar_apenas_2fa para backup
+            if not verificar_apenas_2fa(self.tab_frame):
+                messagebox.showinfo("Cancelado", "Backup cancelado pelo usuário.")
                 return
 
             backup_path = filedialog.asksaveasfilename(

@@ -1,5 +1,5 @@
 import tkinter as tk
-from tkinter import messagebox, filedialog
+from tkinter import messagebox, filedialog, simpledialog
 import ttkbootstrap as ttkb
 from ttkbootstrap.constants import *
 import os
@@ -63,14 +63,17 @@ class SecurityTab:
     def test_2fa(self):
         """Testa o funcionamento do 2FA"""
         try:
-            from assets.autenticacao_2fa import verificar_2fa_gui
+            from assets.autenticacao_2fa import verificar_apenas_2fa
 
             if not self.keepass_manager.ensure_open():
                 messagebox.showerror("Erro", "Abra o banco de dados primeiro!")
                 return
 
-            verificar_2fa_gui()
-            messagebox.showinfo("2FA", "O código 2FA foi validado com sucesso!")
+            # CORREÇÃO: Usar função específica para teste de 2FA
+            if verificar_apenas_2fa():
+                messagebox.showinfo("2FA", "O código 2FA foi validado com sucesso!")
+            else:
+                messagebox.showerror("2FA", "Falha na validação do código 2FA!")
 
         except ImportError:
             messagebox.showerror("Erro", "Módulo de autenticação 2FA não encontrado!")
@@ -88,11 +91,14 @@ class SecurityTab:
                 "Confirmar",
                 "Deseja reconfigurar o 2FA?\nVocê precisará escanear um novo QR Code.",
             ):
+                # CORREÇÃO: Usar função específica de reset
+                from assets.autenticacao_2fa import resetar_configuracao
 
-                from assets.autenticacao_2fa import configurar_2fa_gui
-
-                configurar_2fa_gui()
-                messagebox.showinfo("2FA", "2FA reconfigurado com sucesso!")
+                resetar_configuracao()
+                messagebox.showinfo(
+                    "2FA",
+                    "2FA resetado com sucesso!\nConfigure novamente na próxima abertura do cofre.",
+                )
 
         except ImportError:
             messagebox.showerror("Erro", "Módulo de configuração 2FA não encontrado!")
@@ -267,38 +273,173 @@ class SecurityTab:
             messagebox.showerror("Erro", f"Erro ao obter estatísticas: {e}")
 
     def change_master_password(self):
-        """Altera a senha mestra do banco"""
+        """CORREÇÃO: Método descomentado e implementado corretamente"""
         try:
             if not self.keepass_manager.ensure_open():
                 messagebox.showerror("Erro", "Abra o banco de dados primeiro!")
                 return
 
-            from tkinter import simpledialog
+            # CORREÇÃO 1: Verificar 2FA antes de alterar senha
+            from assets.autenticacao_2fa import verificar_apenas_2fa
 
-            new_password = simpledialog.askstring(
-                "Nova Senha Mestra", "Digite a nova senha mestra:", show="*"
-            )
+            if not verificar_apenas_2fa():
+                messagebox.showerror("Erro", "Verificação 2FA necessária!")
+                return
 
-            if new_password:
-                confirm_password = simpledialog.askstring(
-                    "Confirmar Senha", "Confirme a nova senha:", show="*"
-                )
+            # CORREÇÃO 2: Usar interface customizada para nova senha
+            dialog_result = self._show_password_change_dialog()
+
+            if dialog_result:
+                new_password, confirm_password = dialog_result
 
                 if new_password == confirm_password:
                     if self.keepass_manager.change_master_password(new_password):
                         messagebox.showinfo("Sucesso", "Senha alterada com sucesso!")
                         self.status_bar.update_status("Senha mestra alterada")
+
+                        # CORREÇÃO 3: Atualizar hash da senha no arquivo de configuração
+                        try:
+                            from assets.autenticacao_2fa import (
+                                salvar_config_cofre,
+                                obter_config_cofre,
+                                hash_senha,
+                            )
+
+                            config = obter_config_cofre()
+                            nome_cofre = config.get("nome_cofre", "FortiCore")
+                            salvar_config_cofre(nome_cofre, hash_senha(new_password))
+                        except Exception as e:
+                            print(
+                                f"Aviso: Não foi possível atualizar configuração 2FA: {e}"
+                            )
                     else:
                         messagebox.showerror("Erro", "Falha ao alterar senha!")
                 else:
                     messagebox.showerror("Erro", "Senhas não coincidem!")
 
+        except ImportError:
+            messagebox.showerror("Erro", "Módulo de autenticação 2FA não encontrado!")
         except Exception as e:
             messagebox.showerror("Erro", f"Erro ao alterar senha: {e}")
+
+    def _show_password_change_dialog(self):
+        """NOVO: Mostra diálogo personalizado para mudança de senha"""
+        dialog = ttkb.Toplevel()
+        dialog.title("🔑 Alterar Senha Mestra")
+        dialog.geometry("400x250")
+        dialog.resizable(False, False)
+        dialog.transient(self.tab_frame)
+        dialog.grab_set()
+
+        # Centralizar
+        dialog.update_idletasks()
+        x = (dialog.winfo_screenwidth() - dialog.winfo_width()) // 2
+        y = (dialog.winfo_screenheight() - dialog.winfo_height()) // 2
+        dialog.geometry(f"+{x}+{y}")
+
+        result = None
+
+        main_frame = ttkb.Frame(dialog)
+        main_frame.pack(fill="both", expand=True, padx=20, pady=15)
+
+        # Título
+        title_label = ttkb.Label(
+            main_frame,
+            text="Nova Senha Mestra",
+            font=("Segoe UI", 12, "bold"),
+            bootstyle="primary",
+        )
+        title_label.pack(pady=(0, 20))
+
+        # Nova senha
+        ttkb.Label(
+            main_frame,
+            text="Nova senha (mínimo 8 caracteres):",
+            font=("Segoe UI", 10, "bold"),
+        ).pack(anchor="w", pady=(0, 5))
+
+        new_password_var = tk.StringVar()
+        new_password_entry = ttkb.Entry(
+            main_frame, textvariable=new_password_var, show="*", font=("Segoe UI", 11)
+        )
+        new_password_entry.pack(fill="x", pady=(0, 15))
+
+        # Confirmar senha
+        ttkb.Label(
+            main_frame, text="Confirmar nova senha:", font=("Segoe UI", 10, "bold")
+        ).pack(anchor="w", pady=(0, 5))
+
+        confirm_password_var = tk.StringVar()
+        confirm_password_entry = ttkb.Entry(
+            main_frame,
+            textvariable=confirm_password_var,
+            show="*",
+            font=("Segoe UI", 11),
+        )
+        confirm_password_entry.pack(fill="x", pady=(0, 20))
+
+        # Botões
+        btn_frame = ttkb.Frame(main_frame)
+        btn_frame.pack(fill="x")
+
+        def on_confirm():
+            nonlocal result
+            new_pass = new_password_var.get()
+            confirm_pass = confirm_password_var.get()
+
+            if len(new_pass) < 8:
+                messagebox.showerror("Erro", "Senha deve ter pelo menos 8 caracteres!")
+                return
+
+            if not new_pass or not confirm_pass:
+                messagebox.showerror("Erro", "Preencha todos os campos!")
+                return
+
+            result = (new_pass, confirm_pass)
+            dialog.destroy()
+
+        def on_cancel():
+            nonlocal result
+            result = None
+            dialog.destroy()
+
+        cancel_btn = ttkb.Button(
+            btn_frame,
+            text="Cancelar",
+            command=on_cancel,
+            bootstyle="secondary",
+            width=12,
+        )
+        cancel_btn.pack(side="right", padx=(10, 0))
+
+        confirm_btn = ttkb.Button(
+            btn_frame, text="Alterar", command=on_confirm, bootstyle="success", width=12
+        )
+        confirm_btn.pack(side="right")
+
+        # Focar no primeiro campo
+        new_password_entry.focus()
+
+        # Enter para confirmar
+        dialog.bind("<Return>", lambda e: on_confirm())
+
+        # Aguardar resultado
+        dialog.wait_window()
+
+        return result
 
     def export_entries_list(self):
         """Exporta entradas para CSV"""
         try:
+            # CORREÇÃO: Verificar 2FA antes de exportar
+            from assets.autenticacao_2fa import verificar_apenas_2fa
+
+            if not verificar_apenas_2fa():
+                messagebox.showerror(
+                    "Erro", "Verificação 2FA necessária para exportação!"
+                )
+                return
+
             export_path = filedialog.asksaveasfilename(
                 title="Exportar Lista",
                 defaultextension=".csv",
@@ -312,5 +453,7 @@ class SecurityTab:
                 else:
                     messagebox.showerror("Erro", "Falha na exportação!")
 
+        except ImportError:
+            messagebox.showerror("Erro", "Módulo de autenticação 2FA não encontrado!")
         except Exception as e:
             messagebox.showerror("Erro", f"Erro na exportação: {e}")

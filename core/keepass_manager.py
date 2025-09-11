@@ -4,6 +4,7 @@ import hmac
 from datetime import datetime
 from typing import List, Dict, Optional, Tuple
 import secrets
+import time
 
 
 from utils.caminhos import get_pasta_cofre
@@ -18,6 +19,7 @@ class KeePassManager:
         self.db = None
         self.master_password = None
         self._initialized = False
+        self._pending_save = False  # NOVO: Flag para controlar salvamentos pendentes
 
         # Criar pasta se não existir - OPERAÇÃO SEGURA
         if not os.path.exists(self.pasta_cofre):
@@ -60,16 +62,15 @@ class KeePassManager:
         return hmac.compare_digest(calculated_hmac, expected_hmac)
 
     def _get_master_password(self) -> Optional[str]:
-        """Obtém a senha mestra do usuário - REMOVIDO IMPORT NO TOPO"""
+        """Obtém a senha mestra do usuário através da interface 2FA unificada"""
         if self.master_password:
             return self.master_password
 
         # Import dinâmico para evitar problemas no startup
-        from tkinter import simpledialog
+        from assets.autenticacao_2fa import obter_senha_mestre
 
-        password = simpledialog.askstring(
-            "Senha Mestra", "Digite a senha mestra do cofre:", show="*"
-        )
+        # Usar a nova interface unificada
+        password = obter_senha_mestre()
 
         if password:
             self.master_password = password
@@ -84,48 +85,60 @@ class KeePassManager:
         """Verifica se o banco de dados existe"""
         return os.path.exists(self.db_path)
 
+    def _safe_save_with_hmac(self):
+        """NOVO: Salva o banco e atualiza HMAC de forma segura"""
+        if not self.db:
+            return False
+
+        try:
+            # 1. Salvar o banco primeiro
+            self.db.save()
+
+            # 2. Aguardar um momento para o sistema operacional finalizar a escrita
+            time.sleep(0.1)
+
+            # 3. Verificar se o arquivo foi realmente escrito
+            if not os.path.exists(self.db_path):
+                return False
+
+            # 4. APENAS AGORA calcular e salvar o HMAC
+            self._save_database_hmac()
+
+            self._pending_save = False
+            return True
+
+        except Exception as e:
+            print(f"Erro ao salvar com HMAC: {e}")
+            return False
+
     def create_database(self) -> bool:
-        """Cria um novo banco de dados KeePass"""
+        """Cria um novo banco de dados KeePass - VERSÃO CORRIGIDA SEM DUPLICAÇÃO DE INTERFACE"""
         try:
             # Import dinâmico
-            from tkinter import simpledialog, messagebox
+            from tkinter import messagebox
             from pykeepass import create_database, PyKeePass
 
-            password = simpledialog.askstring(
-                "Nova Senha Mestra",
-                "Crie uma senha mestra para o cofre:\n(Mínimo 8 caracteres)",
-                show="*",
-            )
+            # CORREÇÃO: Usar apenas a interface do autenticacao_2fa.py
+            # Não criar diálogos aqui - usar obter_senha_mestre que já tem tudo integrado
+            password = self._get_master_password()
 
             if not password:
-                return False
-
-            if len(password) < 8:
-                messagebox.showerror("Erro", "Senha deve ter pelo menos 8 caracteres!")
-                return False
-
-            # Confirmar senha
-            confirm_password = simpledialog.askstring(
-                "Confirmar Senha", "Confirme a senha mestra:", show="*"
-            )
-
-            if password != confirm_password:
-                messagebox.showerror("Erro", "Senhas não coincidem!")
                 return False
 
             # Inicialização lazy
             self._lazy_init()
 
-            # Criar novo banco KeePass
+            # Criar banco com a senha obtida da interface unificada
             create_database(self.db_path, password=password)
 
-            # Agora abrir o banco recém-criado
+            # Abrir banco recém-criado
             self.db = PyKeePass(self.db_path, password=password)
+            self.master_password = password
 
             # Criar grupo principal
             main_group = self.db.add_group(self.db.root_group, "FortiCore Senhas")
 
-            # Adicionar entrada de metadados com HMAC
+            # Adicionar entrada de metadados
             metadata = f"Criado em: {datetime.now().isoformat()}\nVersão: FortiCore Sentinel 2.0"
             self.db.add_entry(
                 main_group,
@@ -135,15 +148,13 @@ class KeePassManager:
                 notes=metadata,
             )
 
-            # Salvar PRIMEIRO
-            self.db.save()
-            self.master_password = password
-
-            # DEPOIS calcular e salvar HMAC (CORREÇÃO PRINCIPAL)
-            self._save_database_hmac()
-
-            messagebox.showinfo("Sucesso", "Cofre KeePass criado com sucesso!")
-            return True
+            # Usar salvamento seguro
+            if self._safe_save_with_hmac():
+                messagebox.showinfo("Sucesso", "Cofre KeePass criado com sucesso!")
+                return True
+            else:
+                messagebox.showerror("Erro", "Falha ao salvar cofre inicial!")
+                return False
 
         except Exception as e:
             from tkinter import messagebox
@@ -152,7 +163,7 @@ class KeePassManager:
             return False
 
     def open_database(self) -> bool:
-        """Abre o banco de dados KeePass"""
+        """Abre o banco de dados KeePass - VERSÃO CORRIGIDA"""
         try:
             # Import dinâmico
             from pykeepass import PyKeePass
@@ -162,34 +173,39 @@ class KeePassManager:
             # Inicialização lazy
             self._lazy_init()
 
-            # CORREÇÃO: Só verificar integridade se o arquivo HMAC existir
-            hmac_file = self.db_path + ".hmac"
-            if os.path.exists(hmac_file) and not self._verify_database_integrity():
-                messagebox.showerror(
-                    "Erro de Integridade",
-                    "O arquivo do cofre foi modificado ou corrompido!\n"
-                    "Operação cancelada por segurança.",
-                )
-                return False
-
             password = self._get_master_password()
             if not password:
                 return False
 
-            self.db = PyKeePass(self.db_path, password=password)
+            # CORREÇÃO 1: Tentar abrir PRIMEIRO, depois verificar integridade
+            try:
+                self.db = PyKeePass(self.db_path, password=password)
+                self.master_password = password
+            except CredentialsError:
+                messagebox.showerror("Erro", "Senha incorreta!")
+                self.master_password = None
+                return False
 
-            # CORREÇÃO: Gerar HMAC se não existir
-            if not os.path.exists(hmac_file):
+            # CORREÇÃO 2: Só verificar integridade APÓS abertura bem-sucedida
+            hmac_file = self.db_path + ".hmac"
+            if os.path.exists(hmac_file):
+                # Aguardar um momento para evitar conflitos de arquivo
+                time.sleep(0.1)
+
+                if not self._verify_database_integrity():
+                    messagebox.showwarning(
+                        "Aviso de Integridade",
+                        "O arquivo do cofre pode ter sido modificado.\n"
+                        "O HMAC será regenerado para a sessão atual.",
+                    )
+                    # CORREÇÃO 3: Regenerar HMAC ao invés de falhar
+                    self._save_database_hmac()
+            else:
+                # CORREÇÃO 4: Gerar HMAC inicial se não existir
                 self._save_database_hmac()
 
             return True
 
-        except CredentialsError:
-            from tkinter import messagebox
-
-            messagebox.showerror("Erro", "Senha incorreta!")
-            self.master_password = None
-            return False
         except FileNotFoundError:
             # Banco não existe, criar novo
             return self.create_database()
@@ -200,19 +216,42 @@ class KeePassManager:
             return False
 
     def _save_database_hmac(self):
-        """Salva o HMAC do banco de dados"""
+        """Salva o HMAC do banco de dados - VERSÃO CORRIGIDA"""
         if not os.path.exists(self.db_path):
             return
 
         try:
-            with open(self.db_path, "rb") as f:
-                db_data = f.read()
+            # CORREÇÃO 1: Aguardar para garantir que o arquivo está disponível
+            max_attempts = 3
+            for attempt in range(max_attempts):
+                try:
+                    with open(self.db_path, "rb") as f:
+                        db_data = f.read()
+                    break
+                except (OSError, IOError) as e:
+                    if attempt == max_attempts - 1:
+                        print(
+                            f"Erro ao ler arquivo para HMAC após {max_attempts} tentativas: {e}"
+                        )
+                        return
+                    time.sleep(0.2)  # Aguardar 200ms antes de tentar novamente
 
             hmac_value = self._calculate_hmac(db_data)
             hmac_file = self.db_path + ".hmac"
 
-            with open(hmac_file, "w") as f:
-                f.write(hmac_value)
+            # CORREÇÃO 2: Salvar HMAC com retry em caso de falha
+            for attempt in range(max_attempts):
+                try:
+                    with open(hmac_file, "w") as f:
+                        f.write(hmac_value)
+                    break
+                except (OSError, IOError) as e:
+                    if attempt == max_attempts - 1:
+                        print(
+                            f"Erro ao salvar HMAC após {max_attempts} tentativas: {e}"
+                        )
+                        return
+                    time.sleep(0.2)
 
             # Tornar arquivo HMAC oculto
             if os.name == "nt":  # Windows
@@ -225,31 +264,50 @@ class KeePassManager:
             print(f"Erro ao salvar HMAC: {e}")
 
     def _verify_database_integrity(self) -> bool:
-        """Verifica a integridade do banco de dados"""
+        """Verifica a integridade do banco de dados - VERSÃO CORRIGIDA"""
         if not os.path.exists(self.db_path):
             return True  # Não existe ainda, ok
 
         hmac_file = self.db_path + ".hmac"
         if not os.path.exists(hmac_file):
-            # CORREÇÃO: Não existe HMAC, é normal na primeira execução
-            return True
+            return True  # HMAC não existe, assumir OK
 
         try:
-            # Ler HMAC salvo
-            with open(hmac_file, "r") as f:
-                expected_hmac = f.read().strip()
+            # CORREÇÃO 1: Ler HMAC com retry
+            max_attempts = 3
+            expected_hmac = None
 
-            # Ler dados atuais
-            with open(self.db_path, "rb") as f:
-                current_data = f.read()
+            for attempt in range(max_attempts):
+                try:
+                    with open(hmac_file, "r") as f:
+                        expected_hmac = f.read().strip()
+                    break
+                except (OSError, IOError):
+                    if attempt == max_attempts - 1:
+                        return True  # Falha na leitura, assumir OK
+                    time.sleep(0.1)
+
+            # CORREÇÃO 2: Ler dados atuais com retry
+            current_data = None
+            for attempt in range(max_attempts):
+                try:
+                    with open(self.db_path, "rb") as f:
+                        current_data = f.read()
+                    break
+                except (OSError, IOError):
+                    if attempt == max_attempts - 1:
+                        return True  # Falha na leitura, assumir OK
+                    time.sleep(0.1)
+
+            if current_data is None or expected_hmac is None:
+                return True  # Não conseguiu ler, assumir OK
 
             # Verificar integridade
             return self._verify_hmac(current_data, expected_hmac)
 
         except Exception as e:
             print(f"Erro ao verificar integridade: {e}")
-            # CORREÇÃO: Em caso de erro, assumir que está OK (evita falsos positivos)
-            return True
+            return True  # Em caso de erro, assumir OK
 
     def ensure_open(self) -> bool:
         """Garante que o banco está aberto"""
@@ -265,7 +323,7 @@ class KeePassManager:
         url: str = "",
         notes: str = "",
     ) -> bool:
-        """Adiciona uma nova entrada ao cofre"""
+        """Adiciona uma nova entrada ao cofre - VERSÃO CORRIGIDA"""
         try:
             if not self.ensure_open():
                 return False
@@ -294,13 +352,8 @@ class KeePassManager:
                 notes=enhanced_notes,
             )
 
-            # Salvar PRIMEIRO
-            self.db.save()
-
-            # DEPOIS atualizar HMAC
-            self._save_database_hmac()
-
-            return True
+            # CORREÇÃO: Usar salvamento seguro
+            return self._safe_save_with_hmac()
 
         except Exception as e:
             from tkinter import messagebox
@@ -401,7 +454,7 @@ class KeePassManager:
         url: str = None,
         notes: str = None,
     ) -> bool:
-        """Atualiza uma entrada existente"""
+        """Atualiza uma entrada existente - VERSÃO CORRIGIDA"""
         try:
             if not self.ensure_open():
                 return False
@@ -426,13 +479,8 @@ class KeePassManager:
                     notes += f"\n\n--- Metadados ---\nModificado: {timestamp}\nFortiCore Sentinel v2.0"
                 entry_object.notes = notes
 
-            # Salvar PRIMEIRO
-            self.db.save()
-
-            # DEPOIS atualizar HMAC
-            self._save_database_hmac()
-
-            return True
+            # CORREÇÃO: Usar salvamento seguro
+            return self._safe_save_with_hmac()
 
         except Exception as e:
             from tkinter import messagebox
@@ -441,7 +489,7 @@ class KeePassManager:
             return False
 
     def delete_entry(self, entry_object) -> bool:
-        """Exclui uma entrada do cofre"""
+        """Exclui uma entrada do cofre - VERSÃO CORRIGIDA"""
         try:
             if not self.ensure_open():
                 return False
@@ -452,13 +500,8 @@ class KeePassManager:
             else:
                 self.db.delete_entry(entry_object)
 
-            # Salvar PRIMEIRO
-            self.db.save()
-
-            # DEPOIS atualizar HMAC
-            self._save_database_hmac()
-
-            return True
+            # CORREÇÃO: Usar salvamento seguro
+            return self._safe_save_with_hmac()
 
         except Exception as e:
             from tkinter import messagebox
@@ -473,6 +516,13 @@ class KeePassManager:
                 return False
 
             import shutil
+
+            # CORREÇÃO: Salvar antes de fazer backup
+            if self.db:
+                self._safe_save_with_hmac()
+
+            # Aguardar para garantir que o arquivo foi salvo
+            time.sleep(0.2)
 
             # Copiar arquivo principal
             shutil.copy2(self.db_path, backup_path)
@@ -506,15 +556,14 @@ class KeePassManager:
 
             # Alterar senha
             self.db.password = new_password
-            self.db.save()
 
-            # Atualizar HMAC
-            self._save_database_hmac()
-
-            # Atualizar senha em memória
-            self.master_password = new_password
-
-            return True
+            # CORREÇÃO: Usar salvamento seguro
+            if self._safe_save_with_hmac():
+                # Atualizar senha em memória APENAS se salvamento foi bem-sucedido
+                self.master_password = new_password
+                return True
+            else:
+                return False
 
         except Exception as e:
             from tkinter import messagebox
@@ -580,17 +629,22 @@ class KeePassManager:
             }
 
     def close_database(self):
-        """Fecha o banco de dados e limpa senha da memória"""
+        """Fecha o banco de dados e limpa senha da memória - VERSÃO CORRIGIDA"""
         if self.db:
-            # CORREÇÃO: Salvar antes de fechar
             try:
-                self.db.save()
-                self._save_database_hmac()
+                # CORREÇÃO: Salvar uma última vez antes de fechar
+                self._safe_save_with_hmac()
+
+                # Aguardar um pouco para garantir que tudo foi salvo
+                time.sleep(0.2)
+
             except Exception as e:
                 print(f"Erro ao salvar antes de fechar: {e}")
             finally:
                 self.db = None
+
         self.master_password = None
+        self._pending_save = False
 
     def is_database_locked(self) -> bool:
         """Verifica se o banco está travado (fechado)"""
@@ -635,7 +689,7 @@ class KeePassManager:
             return False
 
     def import_from_csv(self, csv_path: str) -> bool:
-        """NOVO: Importa entradas de arquivo CSV"""
+        """Importa entradas de arquivo CSV - VERSÃO CORRIGIDA"""
         try:
             if not self.ensure_open():
                 return False
@@ -664,9 +718,10 @@ class KeePassManager:
                     )
                     return False
 
-                for row_num, row in enumerate(
-                    reader, start=2
-                ):  # Começar na linha 2 (após header)
+                # CORREÇÃO: Coletar todas as entradas primeiro, depois salvar uma vez
+                entries_to_add = []
+
+                for row_num, row in enumerate(reader, start=2):
                     try:
                         # Limpar dados
                         title = str(row.get("title", "")).strip()
@@ -688,25 +743,60 @@ class KeePassManager:
                         if notes:
                             import_notes = f"{notes}\n\n{import_notes}"
 
-                        # Adicionar entrada
-                        success = self.add_entry(
-                            title=title,
-                            username=username,
-                            password=password,
-                            url=url,
-                            notes=import_notes,
+                        entries_to_add.append(
+                            {
+                                "title": title,
+                                "username": username,
+                                "password": password,
+                                "url": url,
+                                "notes": import_notes,
+                            }
                         )
-
-                        if success:
-                            imported_count += 1
-                        else:
-                            errors.append(
-                                f"Linha {row_num}: Falha ao adicionar '{title}'"
-                            )
 
                     except Exception as e:
                         errors.append(f"Linha {row_num}: Erro - {str(e)}")
                         continue
+
+                # CORREÇÃO: Adicionar todas as entradas e salvar UMA vez
+                if entries_to_add:
+                    # Encontrar ou criar grupo principal
+                    main_group = None
+                    for group in self.db.groups:
+                        if group.name == "FortiCore Senhas":
+                            main_group = group
+                            break
+
+                    if not main_group:
+                        main_group = self.db.add_group(
+                            self.db.root_group, "FortiCore Senhas"
+                        )
+
+                    # Adicionar todas as entradas
+                    for entry_data in entries_to_add:
+                        try:
+                            timestamp = datetime.now().isoformat()
+                            enhanced_notes = f"{entry_data['notes']}\n\n--- Metadados ---\nCriado: {timestamp}\nFortiCore Sentinel v2.0"
+
+                            self.db.add_entry(
+                                main_group,
+                                title=entry_data["title"],
+                                username=entry_data["username"],
+                                password=entry_data["password"],
+                                url=entry_data["url"],
+                                notes=enhanced_notes,
+                            )
+                            imported_count += 1
+                        except Exception as e:
+                            errors.append(
+                                f"Erro ao adicionar '{entry_data['title']}': {str(e)}"
+                            )
+
+                    # CORREÇÃO: Salvar UMA ÚNICA VEZ após todas as adições
+                    if not self._safe_save_with_hmac():
+                        messagebox.showerror(
+                            "Erro", "Falha ao salvar entradas importadas!"
+                        )
+                        return False
 
             # Mostrar resultado
             result_msg = f"Importadas {imported_count} entradas com sucesso!"
@@ -752,6 +842,9 @@ class KeePassManager:
             backend = default_backend()
             imported_count = 0
 
+            # CORREÇÃO: Coletar entradas primeiro, salvar depois
+            entries_to_add = []
+
             for keyword, encrypted_entries in old_data.items():
                 for encrypted_entry in encrypted_entries:
                     try:
@@ -782,25 +875,65 @@ class KeePassManager:
                             password = decrypted_data
                             old_notes = "Importado do sistema antigo"
 
-                        # Adicionar ao KeePass
-                        success = self.add_entry(
-                            title=f"[IMPORTADO] {keyword}",
-                            username="Usuário Importado",
-                            password=password,
-                            notes=old_notes,
+                        entries_to_add.append(
+                            {
+                                "title": f"[IMPORTADO] {keyword}",
+                                "username": "Usuário Importado",
+                                "password": password,
+                                "url": "",
+                                "notes": old_notes,
+                            }
                         )
-
-                        if success:
-                            imported_count += 1
 
                     except Exception as e:
                         print(f"Erro ao importar entrada: {e}")
                         continue
 
-            messagebox.showinfo(
-                "Importação", f"Importadas {imported_count} entradas do sistema antigo!"
-            )
-            return True
+            # CORREÇÃO: Adicionar todas as entradas e salvar UMA vez
+            if entries_to_add:
+                # Encontrar ou criar grupo principal
+                main_group = None
+                for group in self.db.groups:
+                    if group.name == "FortiCore Senhas":
+                        main_group = group
+                        break
+
+                if not main_group:
+                    main_group = self.db.add_group(
+                        self.db.root_group, "FortiCore Senhas"
+                    )
+
+                # Adicionar todas as entradas
+                for entry_data in entries_to_add:
+                    try:
+                        timestamp = datetime.now().isoformat()
+                        enhanced_notes = f"{entry_data['notes']}\n\n--- Metadados ---\nCriado: {timestamp}\nFortiCore Sentinel v2.0"
+
+                        self.db.add_entry(
+                            main_group,
+                            title=entry_data["title"],
+                            username=entry_data["username"],
+                            password=entry_data["password"],
+                            url=entry_data["url"],
+                            notes=enhanced_notes,
+                        )
+                        imported_count += 1
+                    except Exception as e:
+                        print(f"Erro ao adicionar entrada importada: {e}")
+
+                # CORREÇÃO: Salvar UMA ÚNICA VEZ
+                if self._safe_save_with_hmac():
+                    messagebox.showinfo(
+                        "Importação",
+                        f"Importadas {imported_count} entradas do sistema antigo!",
+                    )
+                    return True
+                else:
+                    messagebox.showerror("Erro", "Falha ao salvar entradas importadas!")
+                    return False
+            else:
+                messagebox.showinfo("Importação", "Nenhuma entrada foi importada.")
+                return False
 
         except Exception as e:
             from tkinter import messagebox

@@ -1,7 +1,3 @@
-"""
-FortiCore Sentinel - Aba do Gerador de Senhas
-"""
-
 import tkinter as tk
 from tkinter import messagebox
 import ttkbootstrap as ttkb
@@ -266,15 +262,19 @@ class PasswordGeneratorTab:
             strength = self.calculate_password_strength(password)
             self.strength_progress["value"] = strength
 
+            # Define os níveis visuais
             if strength < 30:
                 self.strength_label.config(text="Fraca", bootstyle="danger")
                 self.strength_progress.config(bootstyle="danger-striped")
             elif strength < 60:
                 self.strength_label.config(text="Média", bootstyle="warning")
                 self.strength_progress.config(bootstyle="warning-striped")
-            else:
+            elif strength < 85:
                 self.strength_label.config(text="Forte", bootstyle="success")
                 self.strength_progress.config(bootstyle="success-striped")
+            else:
+                self.strength_label.config(text="Excelente", bootstyle="info")
+                self.strength_progress.config(bootstyle="info-striped")
 
             self.mensagem_var.set("Senha gerada com sucesso!")
             self.status_bar.update_status("Nova senha gerada")
@@ -283,29 +283,38 @@ class PasswordGeneratorTab:
             messagebox.showerror("Erro", f"Erro ao gerar senha: {str(e)}")
 
     def calculate_password_strength(self, password):
-        """Calcula a força da senha"""
+        """Calcula a força da senha com nível Excelente"""
         if not password:
             return 0
 
         score = 0
 
-        # Comprimento
-        score += min(25, len(password) * 2)
+        # Pontuação pelo comprimento
+        score += min(40, len(password) * 2)
 
         # Diversidade de caracteres
+        tipos = 0
         if any(c.islower() for c in password):
+            tipos += 1
             score += 15
         if any(c.isupper() for c in password):
+            tipos += 1
             score += 15
         if any(c.isdigit() for c in password):
+            tipos += 1
             score += 15
-        if any(c in "!@#$%^&*()_+-=[]{}|;:,.<>?" for c in password):
+        if any(c in "!@#$%^&*()_+-=[]{}|;:,.<>?/" for c in password):
+            tipos += 1
             score += 20
 
-        # Penalidade por repetição
+        # Penaliza repetições excessivas
         unique_chars = len(set(password))
-        if unique_chars < len(password) * 0.8:
+        if unique_chars < len(password) * 0.7:
             score -= 10
+
+        # Novo nível: "Excelente"
+        if len(password) >= 25 and tipos >= 3:
+            score = 100
 
         return min(100, max(0, score))
 

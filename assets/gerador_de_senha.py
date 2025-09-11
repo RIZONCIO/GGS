@@ -1,6 +1,7 @@
 import random
 import string
 
+
 def remover_repetidos(s):
     resultado = ""
     for c in s:
@@ -8,13 +9,20 @@ def remover_repetidos(s):
             resultado += c
     return resultado
 
-def generate_password(keyword, custom_password, uppercase_var, lowercase_var, numbers_var, symbols_var, remove_duplicates, password_length):
-    if not keyword:
-        return "Por favor, insira uma palavra-chave."
 
-    metade = password_length // 2
+def generate_password(
+    keyword,
+    custom_password,
+    uppercase_var,
+    lowercase_var,
+    numbers_var,
+    symbols_var,
+    remove_duplicates,
+    password_length,
+):
+    # Monta o conjunto de caracteres permitidos
     if custom_password:
-        allowed_chars = ''
+        allowed_chars = ""
         if uppercase_var:
             allowed_chars += string.ascii_uppercase
         if lowercase_var:
@@ -25,18 +33,31 @@ def generate_password(keyword, custom_password, uppercase_var, lowercase_var, nu
             allowed_chars += string.punctuation
 
         if not allowed_chars:
-            return "Por favor, selecione pelo menos uma opção de personalização de senha."
-
-        random_chars_start = ''.join(random.choices(allowed_chars, k=metade))
-        random_chars_end = ''.join(random.choices(allowed_chars, k=password_length - metade))
-        password = f"{random_chars_start}{keyword}{random_chars_end}"
+            return (
+                "Por favor, selecione pelo menos uma opção de personalização de senha."
+            )
     else:
         allowed_chars = string.ascii_letters + string.digits + string.punctuation
-        random_chars_start = ''.join(random.choices(allowed_chars, k=metade))
-        random_chars_end = ''.join(random.choices(allowed_chars, k=password_length - metade))
-        password = f"{random_chars_start}{keyword}{random_chars_end}"
 
+    # Calcula a metade do tamanho base da senha (sem contar a keyword)
+    metade = password_length // 2
+
+    # Se existir keyword → senha = random + keyword + random
+    if keyword:
+        # Parte antes e depois da keyword
+        random_chars_start = "".join(random.choices(allowed_chars, k=metade))
+        random_chars_end = "".join(
+            random.choices(allowed_chars, k=password_length - metade)
+        )
+        password = f"{random_chars_start}{keyword}{random_chars_end}"
+    else:
+        # Sem keyword → senha totalmente aleatória
+        password = "".join(random.choices(allowed_chars, k=password_length))
+
+    # Remove duplicados, se necessário
     if remove_duplicates:
         password = remover_repetidos(password)
+        while len(password) < (password_length + len(keyword)):
+            password += random.choice(allowed_chars)
 
     return password
